@@ -1,4 +1,12 @@
-   __pycache__/
-   *.pyc
-   .venv/
-   .env
+__pycache__/
+*.pyc
+.venv/
+.env
+.postman/
+postman/collections/
+postman/documents/
+postman/environments/
+postman/flows/
+postman/globals/
+postman/mocks/
+postman/specs/
