@@ -1,13 +1,13 @@
 from __future__ import annotations
-
+ 
 import logging
-
+ 
 from fastapi import FastAPI, HTTPException, Query, Response, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-
+ 
 from .database import engine
-from .schemas import EnrollmentCreate
+from .schemas import CapacityUpdate, EnrollmentCreate
 
 logger = logging.getLogger(__name__)
 
@@ -253,3 +253,100 @@ def delete_enrollment(student_id: str, class_section_id: str) -> Response:
             )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/sections/{section_id}")
+def get_section(section_id: str) -> dict[str, object]:
+    sql = """
+        SELECT cs.id AS class_id,
+               c.code AS course_code,
+               c.name AS course_name,
+               sem.code AS semester_code,
+               sem.name AS semester_name,
+               l.id AS lecturer_id,
+               l.name AS lecturer_name,
+               v.capacity,
+               v.enrolled,
+               v.remaining
+        FROM class_sections AS cs
+        JOIN courses AS c ON c.code = cs.course_code
+        JOIN semesters AS sem ON sem.code = cs.semester_code
+        JOIN lecturers AS l ON l.id = cs.lecturer_id
+        JOIN v_section_summary AS v ON v.class_id = cs.id
+        WHERE cs.id = :section_id
+    """
+ 
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(sql),
+            {"section_id": section_id.upper()},
+        ).mappings().first()
+ 
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Khong tim thay lop hoc phan",
+        )
+ 
+    return dict(row)
+
+@app.patch("/sections/{section_id}/capacity")
+def update_section_capacity(
+    section_id: str,
+    payload: CapacityUpdate,
+) -> dict[str, object]:
+    section_sql = """
+        SELECT cs.id,
+               COUNT(e.student_id) AS enrolled
+        FROM class_sections AS cs
+        LEFT JOIN enrollments AS e ON e.class_section_id = cs.id
+        WHERE cs.id = :section_id
+        GROUP BY cs.id
+    """
+    update_sql = """
+        UPDATE class_sections
+        SET capacity = :capacity
+        WHERE id = :section_id
+    """
+    section_id = section_id.upper()
+ 
+    with engine.begin() as connection:
+        section = connection.execute(
+            text(section_sql),
+            {"section_id": section_id},
+        ).mappings().first()
+        if section is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Khong tim thay lop hoc phan",
+            )
+ 
+        if payload.capacity < int(section["enrolled"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Suc chua nho hon so sinh vien da dang ky",
+            )
+ 
+        connection.execute(
+            text(update_sql),
+            {"capacity": payload.capacity, "section_id": section_id},
+        )
+ 
+    return {
+        "message": "Cap nhat suc chua thanh cong",
+        "class_id": section_id,
+        "capacity": payload.capacity,
+    }
+
+@app.get("/lecturers")
+def list_lecturers() -> list[dict[str, object]]:
+    sql = """
+        SELECT id, name
+        FROM lecturers
+        ORDER BY id
+    """
+ 
+    with engine.connect() as connection:
+        rows = connection.execute(text(sql)).mappings().all()
+ 
+    return [dict(row) for row in rows]
